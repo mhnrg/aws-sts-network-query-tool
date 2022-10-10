@@ -548,7 +548,10 @@ def worker(account, session, args):
             if not args.profile:
                 print(f'Account {account}: AssumeRole success, querying VPC information')
             ec2 = child_session.client('ec2')
-            region_list = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+            if args.profile:
+                region_list = ['us-east-1','us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-2']
+            else:
+                region_list = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
             for region in region_list:
                 ec2 = child_session.client('ec2', region_name=region)
 
