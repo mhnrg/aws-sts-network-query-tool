@@ -9,6 +9,7 @@ import boto3
 import botocore
 import argparse
 import uuid
+import re
 
 def str2bool(input):
     """
@@ -117,6 +118,42 @@ def list_accounts_from_file(file_name):
                     raise ValueError("Insufficient fields in input file")
                 else:
                     if len(row[accountIdPos].strip()) == 12:
+                        accounts.append(row[accountIdPos].strip())
+                    else:
+                        print(f"Line {x} contains an invalid 12-digit accountid")
+                        raise ValueError("Invalid values in input file")
+
+            x = x + 1
+    return accounts
+
+
+def list_profiles_from_file(file_name):
+    """
+    return a list of all profiles in a csv
+    :param file_name:
+    :return profiles:
+    """
+
+    print("Extracting profiles via File Input")
+    accounts = []
+
+    with open(file_name) as csvfile:
+        readCSV = csv.reader(csvfile, delimiter=',')
+        x = 0
+        # keep track of the positions, since this is a user defined file
+        accountIdPos = None
+        for row in readCSV:
+            # read in the headers
+            if x == 0:
+                for y in range(len(row)):
+                    if row[y].lower() == 'accountid':
+                        accountIdPos = y
+            else:
+                if accountIdPos is None:
+                    print("Input needs to have at least 1 field: accountid")
+                    raise ValueError("Insufficient fields in input file")
+                else:
+                    if re.search('network-admin_', row[accountIdPos].strip()):
                         accounts.append(row[accountIdPos].strip())
                     else:
                         print(f"Line {x} contains an invalid 12-digit accountid")
@@ -491,7 +528,10 @@ def worker(account, session, args):
     :return:
     """
     vpc = None
-    session = boto3.session.Session()
+    if args.profile:
+        session = boto3.session.Session(profile_name=account,region_name='us-east-1')
+    else:
+        session = boto3.session.Session()
 
     results = []
     cannotprocess = []
@@ -499,12 +539,19 @@ def worker(account, session, args):
     try:
         print(f"Processing Account: {account}")
 
-        role_name = os.environ.get('RoleName', args.cross_account_role_name)
-        child_session = get_child_session(account_id=account, role_name=role_name, session=session)
+        if args.profile:
+            child_session = session
+        else:
+            role_name = os.environ.get('RoleName', args.cross_account_role_name)
+            child_session = get_child_session(account_id=account, role_name=role_name, session=session)
         if child_session != 'FAILED':
-            print(f'Account {account}: AssumeRole success, querying VPC information')
+            if not args.profile:
+                print(f'Account {account}: AssumeRole success, querying VPC information')
             ec2 = child_session.client('ec2')
-            region_list = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+            if args.profile:
+                region_list = ['us-east-1','us-east-2', 'us-west-2', 'eu-west-1', 'ap-southeast-2']
+            else:
+                region_list = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
             for region in region_list:
                 ec2 = child_session.client('ec2', region_name=region)
 
@@ -617,6 +664,7 @@ def main():
     parser.add_argument("-peer", "--vpc-peer", type=str2bool, nargs='?', const=True, default=False, help="Activate VPC Peering Report")
     parser.add_argument("-vpn", "--vpn-connections", type=str2bool, nargs='?', const=True, default=False, help="Activate VPN Report")
     parser.add_argument("-all", "--all-reports", type=str2bool, nargs='?', const=True, default=False, help="Activate all supported reports")
+    parser.add_argument("-p", "--profile", type=str2bool, nargs='?', const=True, default=False, help="Allow the use of SSO profiles")
     args = parser.parse_args()
 
     threads = []
@@ -650,6 +698,8 @@ def main():
         accounts = get_org_accounts(session)
         if accounts is None:
             sys.exit(1)
+    elif args.profile:
+        accounts = list_profiles_from_file(args.accounts_csv)
     else:
         accounts = list_accounts_from_file(args.accounts_csv)
 
